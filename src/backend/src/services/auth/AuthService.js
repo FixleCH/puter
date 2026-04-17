@@ -1131,16 +1131,10 @@ class AuthService extends BaseService {
             if ( seen.has(session.uuid) ) {
                 continue;
             }
-            session.meta = this.db.case({
-                mysql: () => session.meta,
-                /**
-                * This method is responsible for authenticating a user or app using a token. It decodes the token and checks if it's valid, then returns an appropriate actor object based on the token type.
-                *
-                * @param {string} token - The user or app access token.
-                * @returns {Actor} - Actor object representing the authenticated user or app.
-                */
-                otherwise: () => JSON.parse(session.meta ?? '{}'),
-            })();
+
+            if ( !session.meta || typeof (session.meta) === 'string' ) {
+                session.meta = JSON.parse(session.meta || '{}');
+            }
             sessions.push(session);
         };
 
@@ -1321,6 +1315,7 @@ class AuthService extends BaseService {
         const normalizedOrigin = this._origin_from_url(origin);
         if ( normalizedOrigin === null ) return null;
 
+        const isFirstPartyHostedOrigin = this.isHostedOriginOnConfiguredDomain(normalizedOrigin);
         const canonicalOrigin = this.canonicalizeHostedAppOriginForUid(normalizedOrigin);
         const localCachedAppUid = this.readLocalCanonicalAppUidFromCache(canonicalOrigin);
         if ( localCachedAppUid !== undefined ) {
@@ -1333,7 +1328,10 @@ class AuthService extends BaseService {
             return redisCachedAppUid;
         }
 
-        const canonicalAppUid = await this.lookupCanonicalAppUidFromOrigin(canonicalOrigin);
+        const canonicalAppUid = await this.lookupCanonicalAppUidFromOrigin(canonicalOrigin, {
+            allowHostedOwnerlessLookup: isFirstPartyHostedOrigin,
+            restrictToOriginHost: isFirstPartyHostedOrigin,
+        });
         this.writeLocalCanonicalAppUidToCache(canonicalOrigin, canonicalAppUid);
         try {
             await this.writeCanonicalAppUidToRedisCache(canonicalOrigin, canonicalAppUid);
@@ -1410,14 +1408,15 @@ class AuthService extends BaseService {
         await this.invalidateCanonicalAppUidCacheForOrigins(canonicalOrigins);
     }
 
-    buildIndexUrlCandidatesFromOrigin (origin) {
+    buildIndexUrlCandidatesFromOrigin (origin, options = {}) {
+        const includeHostedAliases = options?.includeHostedAliases !== false;
         try {
             const parsedOrigin = new URL(origin);
             const hostCandidates = new Set();
             hostCandidates.add(parsedOrigin.host.toLowerCase());
 
             const hostedSubdomain = this.extractHostedAppSubdomainFromHostname(parsedOrigin.hostname);
-            if ( hostedSubdomain ) {
+            if ( hostedSubdomain && includeHostedAliases ) {
                 const hostedDomainCandidates = this.getHostedAppDomainCandidatesForMatch();
                 for ( const hostedDomainCandidate of hostedDomainCandidates ) {
                     if ( hostedDomainCandidate?.host ) {
@@ -1459,9 +1458,22 @@ class AuthService extends BaseService {
         }
     }
 
-    async queryOldestAppUidForIndexUrlCandidates ({
+    isOriginBootstrapAppRow (appRow) {
+        if ( !appRow || typeof appRow !== 'object' ) return false;
+        const appUid = typeof appRow.uid === 'string' ? appRow.uid : '';
+        if ( ! appUid ) return false;
+        if ( appRow.name !== appUid ) return false;
+        if ( appRow.title !== appUid ) return false;
+        const appDescription = typeof appRow.description === 'string'
+            ? appRow.description
+            : '';
+        return appDescription.startsWith('App created from origin ');
+    }
+
+    async queryCanonicalAppUidForIndexUrlCandidates ({
         indexUrlCandidates,
         ownerUserId,
+        preferNonBootstrap = false,
     }) {
         if ( !Array.isArray(indexUrlCandidates) || indexUrlCandidates.length === 0 ) {
             return null;
@@ -1480,22 +1492,57 @@ class AuthService extends BaseService {
         try {
             const dbReadApps = this.services.get('database').get(DB_READ, 'apps');
             const rows = await dbReadApps.read(
-                `SELECT uid FROM apps WHERE ${whereClause} ORDER BY timestamp ASC, id ASC LIMIT 1`,
+                `SELECT uid, name, title, description
+                 FROM apps
+                 WHERE ${whereClause}
+                 ORDER BY timestamp ASC, id ASC`,
                 parameters,
             );
+
             const oldestAppUid = rows?.[0]?.uid;
-            if ( typeof oldestAppUid === 'string' && oldestAppUid ) {
-                return oldestAppUid;
+            if ( typeof oldestAppUid !== 'string' || !oldestAppUid ) {
+                return null;
             }
+
+            if ( ! preferNonBootstrap ) return oldestAppUid;
+
+            const preferredAppRow = rows.find(appRow => !this.isOriginBootstrapAppRow(appRow));
+            const preferredAppUid = preferredAppRow?.uid;
+            if ( typeof preferredAppUid === 'string' && preferredAppUid ) {
+                return preferredAppUid;
+            }
+
+            return oldestAppUid;
         } catch {
             return null;
         }
-
-        return null;
     }
 
-    async lookupCanonicalAppUidFromOrigin (origin) {
-        const indexUrlCandidates = this.buildIndexUrlCandidatesFromOrigin(origin);
+    isHostedOriginOnConfiguredDomain (origin) {
+        try {
+            const parsedOrigin = new URL(origin);
+            const hostedSubdomain = this.extractHostedAppSubdomainFromHostname(parsedOrigin.hostname);
+            if ( ! hostedSubdomain ) return false;
+
+            const firstPartyHostedDomain = this.normalizeHostedDomainCandidate(this.global_config.domain);
+            if ( ! firstPartyHostedDomain?.hostname ) return false;
+
+            const normalizedOriginHostname = parsedOrigin.hostname.trim().toLowerCase();
+            return (
+                normalizedOriginHostname === firstPartyHostedDomain.hostname ||
+                normalizedOriginHostname.endsWith(`.${firstPartyHostedDomain.hostname}`)
+            );
+        } catch {
+            return false;
+        }
+    }
+
+    async lookupCanonicalAppUidFromOrigin (origin, options = {}) {
+        const allowHostedOwnerlessLookup = options?.allowHostedOwnerlessLookup === true;
+        const restrictToOriginHost = options?.restrictToOriginHost === true;
+        const indexUrlCandidates = this.buildIndexUrlCandidatesFromOrigin(origin, {
+            includeHostedAliases: !restrictToOriginHost,
+        });
         if ( indexUrlCandidates.length === 0 ) return null;
 
         try {
@@ -1503,17 +1550,27 @@ class AuthService extends BaseService {
             const hostedSubdomain = this.extractHostedAppSubdomainFromHostname(parsedOrigin.hostname);
 
             if ( hostedSubdomain ) {
+                if ( allowHostedOwnerlessLookup || this.isHostedOriginOnConfiguredDomain(origin) ) {
+                    return await this.queryCanonicalAppUidForIndexUrlCandidates({
+                        indexUrlCandidates,
+                        preferNonBootstrap: true,
+                    });
+                }
+
                 const hostedSubdomainOwnerUserId = await this.getHostedSubdomainOwnerUserId(hostedSubdomain);
                 if ( ! hostedSubdomainOwnerUserId ) {
                     return null;
                 }
-                return await this.queryOldestAppUidForIndexUrlCandidates({
+                return await this.queryCanonicalAppUidForIndexUrlCandidates({
                     ownerUserId: hostedSubdomainOwnerUserId,
                     indexUrlCandidates,
+                    preferNonBootstrap: true,
                 });
             }
 
-            return await this.queryOldestAppUidForIndexUrlCandidates({ indexUrlCandidates });
+            return await this.queryCanonicalAppUidForIndexUrlCandidates({
+                indexUrlCandidates,
+            });
         } catch {
             return null;
         }
@@ -1550,6 +1607,7 @@ class AuthService extends BaseService {
             this.global_config.static_hosting_domain_alt,
             this.global_config.private_app_hosting_domain,
             this.global_config.private_app_hosting_domain_alt,
+            this.global_config.domain,
         ] ) {
             const normalizedDomainCandidate = this.normalizeHostedDomainCandidate(domainCandidate);
             if ( ! normalizedDomainCandidate ) continue;
@@ -1604,6 +1662,8 @@ class AuthService extends BaseService {
 
     canonicalizeHostedAppOriginForUid (origin) {
         try {
+            if ( this.isHostedOriginOnConfiguredDomain(origin) ) return origin;
+
             const parsedOrigin = new URL(origin);
             const hostedSubdomain = this.extractHostedAppSubdomainFromHostname(parsedOrigin.hostname);
             if ( ! hostedSubdomain ) return origin;
