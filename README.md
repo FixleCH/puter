@@ -1,3 +1,5 @@
+<h1>Non continueremo ad aggiornare questo programma, consigliamo alternaive come <a href="https://github.com/nextcloud/server">NextCloud</a> (Considerato il miglior cloud da Fixle Team)</h1>
+
 <h3 align="center"><img width="80" alt="Puter.com, The Personal Cloud Computer: All your files, apps, and games in one place accessible from anywhere at any time." src="https://assets.puter.site/puter-logo.png"></h3>
 
 <h3 align="center">The Internet OS! Free, Open-Source, and Self-Hostable.</h3>
