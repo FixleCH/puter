@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.2](https://github.com/FixleCH/puter/compare/v1.0.1...v1.0.2) (2026-04-25)
+
+
+### Bug Fixes
+
+* 2803 ([7bb27ff](https://github.com/FixleCH/puter/commit/7bb27ffbb410c0006dcee4505d059ea5e8fa8bd7))
+* app canonization for puter.com apps ([#2800](https://github.com/FixleCH/puter/issues/2800)) ([9c38c43](https://github.com/FixleCH/puter/commit/9c38c43f82ac827c6af888e84d86f621049f1bd8))
+* cdn cache invalidation ([#2826](https://github.com/FixleCH/puter/issues/2826)) ([7f9873e](https://github.com/FixleCH/puter/commit/7f9873edd234c9b144092b0e6fb5459809704be7))
+* close start menu popover on repeated click ([#2784](https://github.com/FixleCH/puter/issues/2784)) ([4130fc4](https://github.com/FixleCH/puter/commit/4130fc4104edfbba6ea2720aa290f0aa9673217b)), closes [#1681](https://github.com/FixleCH/puter/issues/1681)
+* Dockerfile to reduce vulnerabilities ([959bb1e](https://github.com/FixleCH/puter/commit/959bb1eef9e1bd309434711a74c9bb0cce3422dd))
+* Dockerfile to reduce vulnerabilities ([b1b2258](https://github.com/FixleCH/puter/commit/b1b225890a7fe5dd3541e02b6340cbcd769570dc))
+* origin app Ids ([#2801](https://github.com/FixleCH/puter/issues/2801)) ([7f7c019](https://github.com/FixleCH/puter/commit/7f7c01956ea278a7fd88edfead2f955d11a19184))
+* update knowledge date for Claude Opus 4.7 model ([#2816](https://github.com/FixleCH/puter/issues/2816)) ([b34f695](https://github.com/FixleCH/puter/commit/b34f69512e10d7389051db91b8d4a8b782ff445c))
+
 ## [1.0.1](https://github.com/FixleCH/puter/compare/v1.0.0...v1.0.1) (2026-04-09)
 
 
